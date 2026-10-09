@@ -232,6 +232,19 @@ def summarize(G: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(out).T
 
 
+def paired(G: pd.DataFrame, defaults: dict) -> str:
+    """逐格配对比较，以及默认参数在各自邻域中的位置。"""
+    keys = ["估值窗口", "卖出线", "回补线", "均线组"]
+    c = G[(G["版本"] == "planc") & (G["U阈值"] == "0.33")].set_index(keys)
+    g = G[G["版本"] == "graded"].set_index(keys)
+    dx, dd = g["XIRR"] - c["XIRR"], g["最大回撤"] - c["最大回撤"]
+    pos = lambda grid, v: (grid["XIRR"] < v).mean()
+    return (f"- 逐格配对：合并版 XIRR 更高的格子占 {(dx > 0).mean():.0%}，差值中位数 {dx.median() * 100:+.2f}pp；"
+            f"回撤更浅的格子占 {(dd > 0).mean():.0%}，差值中位数 {dd.median() * 100:+.2f}pp\n"
+            f"- 默认参数在自身邻域中的分位：原版 {pos(c, defaults['planc']):.0%}，合并版 {pos(g, defaults['graded']):.0%}"
+            f"（分位越高，说明默认点越是邻域里偏幸运的位置）")
+
+
 def verdict(T: pd.DataFrame, tol: float) -> str:
     g, c = T.loc["合并版 graded"], T.loc["原版 U≤1/3"]
     checks = [("跨参数四分位距更小", g["XIRR四分位距"] < c["XIRR四分位距"]),
@@ -249,7 +262,8 @@ def demo_data() -> pd.DataFrame:
     """仅用于测试代码：用价格在过去 15 年中的百分位倒数伪造一个 S。不代表任何估值信息。"""
     px = pd.read_csv(os.path.join(HERE, "..", "data", "hs300.csv"), parse_dates=["date"]).set_index("date")["close"]
     fake_s = 100 - px.rolling("5479D", min_periods=504).rank(pct=True) * 100
-    return pd.DataFrame({"close": px, "S": fake_s}).loc["2013-11-07":]
+    fake_s[:"2013-11-06"] = np.nan          # 与原回测相同的起点
+    return pd.DataFrame({"close": px, "S": fake_s})
 
 
 def main():
@@ -268,7 +282,7 @@ def main():
     has_raw = {"pe", "pb", "dy", "y10"} <= set(df.columns)
     if "S" not in df:
         df["S"] = compute_s(df)
-    df = df.loc[df["S"].first_valid_index():]
+    # 不截断数据：均线要用 S 生效之前的历史价格；S 为空的日子引擎自动跳过
 
     out = os.path.join(HERE, "results_demo" if a.demo else "results")
     os.makedirs(out, exist_ok=True)
@@ -292,7 +306,9 @@ def main():
     ST = summarize(G)
     rep.append("## 3. 参数邻域（卖出线 20/25/30 × 回补线 53/58/63 × 三组均线"
                + (" × 估值窗口 10/15/20 年" if has_raw else "") + "）\n\n"
-               + ST.to_markdown(floatfmt=".4f") + "\n\n### 事前设定的采纳标准\n\n" + verdict(ST, a.tolerance) + "\n")
+               + ST.to_markdown(floatfmt=".4f") + "\n\n"
+               + paired(G, {"planc": rows["Plan C 原版"]["XIRR"], "graded": rows["合并版 v2.0"]["XIRR"]})
+               + "\n\n### 事前设定的采纳标准\n\n" + verdict(ST, a.tolerance) + "\n")
 
     if a.placebo:
         rep_lines = []
