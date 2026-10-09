@@ -1,11 +1,13 @@
 # 沪深300 Plan C 回测与 Plan D
 
+- **`FINAL_STRATEGY.md`：最终策略（规则、参数、回测数值、当前状态）**
 - `REPORT.md`：回测结果、过拟合诊断、评价与修改建议（**先读这个**）
 - `PlanD_rulebook.md`：修改后的策略规则书
 - `PlanC_rulebook_original.md`：原规则书
 - `engine.py`：回测引擎（复现 Plan C 的全部清仓/回补日期）
 - `window_study.py`：扩张窗口 vs 滚动窗口（3/5/7 年）对照，结果见 REPORT 附录 A
 - `window_study2.py`：扩张窗口·年度更新（预热5年） vs 滚动 5/7/10 年，结果见 REPORT 附录 B
+- `final_strategy.py`：最终口径回测，以及"多口径共识确认"的检验（结论：不采用）
 - `analysis.py` / `plan_d.py` / `extra_checks.py`：诊断脚本，输出到 `results_*.txt`
 
 运行：`python3 analysis.py && python3 plan_d.py && python3 extra_checks.py && python3 window_study.py && python3 window_study2.py`（需 pandas、numpy）

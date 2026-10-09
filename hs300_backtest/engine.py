@@ -104,6 +104,7 @@ DEFAULT = dict(
     pool_rate=0.0,            # 资金池年化收益（规则书为 0）
     nav="close",              # close: 价格指数 | nav_tr: 近似全收益基金净值
     sell_fn=None,             # 可选：f(S, U) -> 目标累计卖出比例（覆盖 tiers/u_thr）
+    exit_col=None,            # 可选：卖出判断改用这一列的 S（如多口径共识 S），定投与回补仍用 S
     exit_years=None,          # 仅允许这些年份触发卖出（事件归因用）
     start=None, end=None,
 )
@@ -118,6 +119,7 @@ def run(df, **kw):
         d = d[d.index <= P["end"]]
     nav = d[P["nav"]].values
     S = d["S"].shift(1).values   # T-1 信号
+    SX = d[P["exit_col"]].shift(1).values if P["exit_col"] else S
     U = d["U"].shift(1).values
     close = d["close"].values
     dates = d.index
@@ -147,9 +149,9 @@ def run(df, **kw):
             ok_year = P["exit_years"] is None or dates[i].year in P["exit_years"]
             if shares > 0 and ok_year:
                 if P["sell_fn"] is not None:
-                    tgt = P["sell_fn"](s, u)
+                    tgt = P["sell_fn"](SX[i], u)
                 elif u <= P["u_thr"] + 1e-9:
-                    tgt = max([f for th, f in tiers if s < th], default=0.0)
+                    tgt = max([f for th, f in tiers if SX[i] < th], default=0.0)
                 else:
                     tgt = 0.0
                 if tgt > level + 1e-9:
