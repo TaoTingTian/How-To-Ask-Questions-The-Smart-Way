@@ -257,8 +257,9 @@ def cscv_pbo(R: pd.DataFrame, s: int = 10) -> tuple[float, np.ndarray, float]:
     for comb in itertools.combinations(range(s), s // 2):
         is_idx = np.concatenate([blocks[i] for i in comb])
         oos_idx = np.concatenate([blocks[i] for i in range(s) if i not in comb])
-        sr_is = X[is_idx].mean(0) / X[is_idx].std(0, ddof=1)
-        sr_oos = X[oos_idx].mean(0) / X[oos_idx].std(0, ddof=1)
+        with np.errstate(invalid="ignore", divide="ignore"):  # 整块空仓（波动为 0）记夏普 0
+            sr_is = np.nan_to_num(X[is_idx].mean(0) / X[is_idx].std(0, ddof=1))
+            sr_oos = np.nan_to_num(X[oos_idx].mean(0) / X[oos_idx].std(0, ddof=1))
         k = int(np.nanargmax(sr_is))
         rank = stats.rankdata(sr_oos)[k]
         w = rank / (len(sr_oos) + 1)
