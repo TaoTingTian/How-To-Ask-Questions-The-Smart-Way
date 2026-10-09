@@ -47,11 +47,16 @@ def rolling_pct(s: pd.Series, years=15, min_n=504):
     return pd.Series(out, index=idx)
 
 
-def add_signals(df, years=15, min_n=504, ma=(40, 80, 160)):
+def add_signals(df, years=15, min_n=504, ma=(40, 80, 160), warmup_years=0):
+    """years: 回看窗口（日历年；取很大值即为扩张窗口）
+    warmup_years: 预热期——数据起点后满这么多日历年才输出百分位"""
     df = df.copy()
     df["pb_pct"] = rolling_pct(df["pb"], years, min_n)
     df["dy_pct"] = rolling_pct(df["dividend_yield"], years, min_n)
     df["erp_pct"] = rolling_pct(df["erp"], years, min_n)
+    if warmup_years:
+        cut = df.index[0] + pd.DateOffset(years=warmup_years)
+        df.loc[df.index < cut, ["pb_pct", "dy_pct", "erp_pct"]] = np.nan
     df["S"] = ((100 - df["pb_pct"]) + df["dy_pct"] + df["erp_pct"]) / 3
     df = set_ma(df, ma)
     return df
