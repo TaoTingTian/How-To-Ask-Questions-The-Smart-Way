@@ -1,0 +1,287 @@
+<title>沪深300 V1.7 指标检验</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* 布局：单栏研究备忘录，正文 ~68ch，表格与图表可放宽到 960px；结论先行，证据随后 */
+:root{
+  --bg:#f5f7f6; --paper:#ffffff; --fg:#1a2124; --muted:#5a676b; --rule:#d7dedb; --soft:#eaefed;
+  --accent:#0d6b70; --pos:#1d7a3c; --neg:#b2392d; --flat:#6d7a7d;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --passbg:#e3f1ea;
+  --f-display:"Noto Serif SC","Songti SC","STSong",serif;
+  --f-body:"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#111517; --paper:#181d20; --fg:#e3e9e7; --muted:#9aa8a9; --rule:#2b3437; --soft:#20272a;
+  --accent:#55b8bd; --pos:#62c785; --neg:#f07f70; --flat:#8d9a9b;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --passbg:#183027; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#111517; --paper:#181d20; --fg:#e3e9e7; --muted:#9aa8a9; --rule:#2b3437; --soft:#20272a;
+  --accent:#55b8bd; --pos:#62c785; --neg:#f07f70; --flat:#8d9a9b;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --passbg:#183027; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.75 var(--f-body);padding-inline:16px;padding-block:32px 64px}
+main{max-width:960px;margin:0 auto;display:grid;gap:44px}
+section{display:grid;gap:14px;min-width:0}
+.prose{max-width:68ch}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;line-height:1.3}
+h1{font-size:clamp(26px,4.4vw,36px)}
+h2{font-size:22px;padding-top:6px;border-top:1px solid var(--rule)}
+h3{font-size:16px}
+p{margin:0}
+.eyebrow{font:500 12px/1.4 var(--f-mono);letter-spacing:.06em;color:var(--accent);text-transform:uppercase}
+.meta{color:var(--muted);font-size:13px}
+.lede{font-size:17px;max-width:68ch}
+ul.find{margin:0;padding-left:1.2em;display:grid;gap:8px;max-width:72ch}
+ul.find b{color:var(--accent)}
+.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.pos{color:var(--pos)} .neg{color:var(--neg)} .flat{color:var(--flat)}
+.tw{overflow-x:auto;border:1px solid var(--rule);border-radius:6px;background:var(--paper)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--rule);vertical-align:top;text-align:left}
+thead th{font-weight:500;color:var(--muted);font-size:12.5px;background:var(--soft);white-space:nowrap}
+tbody tr:last-child td,tbody tr:last-child th{border-bottom:0}
+td small,th small{display:block;color:var(--muted);font-size:11.5px;font-family:var(--f-body)}
+.tag{font:11px var(--f-mono);color:var(--muted);margin-left:6px}
+td.cell{min-width:118px}
+td.cell b{font:500 14px var(--f-mono)}
+td.cell.pass{background:var(--passbg)}
+.kpi th{font-weight:500}
+.kpi tr.hl td,.kpi tr.hl th{background:var(--passbg)}
+.figure{background:var(--paper);border:1px solid var(--rule);border-radius:6px;padding:14px 14px 8px;display:grid;gap:6px;min-width:0}
+.figure figcaption{font-size:13px;color:var(--muted)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+svg text{fill:var(--muted);font:11px var(--f-mono)}
+.tip{position:fixed;pointer-events:none;background:var(--paper);color:var(--fg);border:1px solid var(--rule);border-radius:6px;padding:6px 9px;font:12px/1.5 var(--f-mono);box-shadow:0 4px 14px rgb(0 0 0 / .12);z-index:5}
+.rule{background:var(--paper);border:1px solid var(--rule);border-left:3px solid var(--accent);border-radius:4px;padding:14px 16px;display:grid;gap:8px;max-width:76ch}
+.rule code,.mono{font-family:var(--f-mono);font-size:13px}
+.gates{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.gate{border:1px solid var(--rule);border-radius:6px;padding:10px 12px;background:var(--paper);display:grid;gap:4px;align-content:start}
+.gate .k{font:500 12px var(--f-mono);color:var(--accent)}
+.gate p{font-size:13.5px}
+.layers{display:grid;gap:0;border:1px solid var(--rule);border-radius:6px;overflow:hidden;background:var(--paper)}
+.layer{display:grid;grid-template-columns:120px 1fr 1.3fr;gap:12px;padding:10px 12px;border-bottom:1px solid var(--rule);font-size:13.5px}
+.layer:last-child{border-bottom:0}
+.layer .n{font-weight:700}
+.layer .n small{display:block;font:11px var(--f-mono);color:var(--muted);font-weight:400}
+.verdict{font-weight:500}
+@media (max-width:640px){.layer{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<main>
+<header style="display:grid;gap:10px">
+  <span class="eyebrow">研究备忘 · 沪深300 估值定投策略 V1.6 → V1.7</span>
+  <h1>沪深300 V1.7 指标检验</h1>
+  <p class="lede">把图中 10 个均值回归指标、凯尔特纳通道和波动率分位，逐一放进 V1.6 的不同决策环节做回测，同时用参数邻域、安慰剂信号、样本内外切分和回测过拟合概率筛掉"看起来有效"的结果。</p>
+  <p class="meta">回测区间 2014-01-07 至 2026-04-23（行情数据止于此）· 共 1,858 组策略回测 + 2,916 组信号检验 · 指标默认参数事先固定，不做寻优</p>
+</header>
+
+<section>
+  <h2>结论</h2>
+  <ul class="find">
+    <li><b>大部分指标没有增量。</b>在估值分 V 已知的前提下，9 个指标的超卖/超买信号对未来 20、60 日收益都没有显著预测力（默认参数 t 值全部 &lt; 2）。放进策略后，绝大多数变体的年化 IRR 变化在 ±0.5 个百分点以内。</li>
+    <li><b>这些指标基本是同一个东西。</b>布林带 %b、RSI、KDJ、BIAS、W%R、ATR 通道、凯尔特纳、VWAP 偏离之间的秩相关为 0.82–1.00，BIAS 与 20 日 VWAP 偏离为 1.00。它们都在度量"价格短期偏离近期均值多少"，叠加几个不会增加信息，只会增加过拟合的自由度。</li>
+    <li><b>全部 %%NVAR%% 个变体的回测过拟合概率 PBO = %%PBO%%。</b>也就是说，在样本内挑出的最优变体，样本外跑赢中位数的概率约等于抛硬币。按回测收益排名去挑指标组合，得到的多半是噪声。</li>
+    <li><b>回投前"等超卖"的增益来自延迟本身。</b>把同一信号在时间上随机平移（安慰剂），平移后的结果反而好于真实信号（RSI、布林带、KDJ、凯尔特纳都落在安慰剂的 5–12 分位）。V1.6 在深熊里回投偏早，任何延迟都会改善，与指标无关。</li>
+    <li><b>只有一个机制通过了全部关卡：止盈时"等超买回落再卖"。</b>估值进入止盈区后，若短期仍处于超买（BIAS20 &gt; 5%）就暂缓，超买消退后再卖，最多等 20 个交易日。它在三轮止盈周期里都为正，81 种结构变形中 %%POS5%% 为正，安慰剂对照排第 100 分位，样本内外同向。现实预期增益约 +0.2～+0.8 个百分点年化，回撤不变。</li>
+    <li><b>"恐慌时加速买入"在这个结构里有害。</b>高波动时把回投切换到更积极的企稳线，IRR −0.3 个百分点，最大回撤恶化 3 个百分点。动态网格分批止盈同样有害（−0.9 个百分点）。</li>
+    <li><b>期权隐含波动率未能检验。</b>本环境的网络策略拦截了所有期权数据源。我用 20 日已实现波动率分位做了替代检验（结论如上），并留好了 IV 接入脚本，本地一条命令即可补测。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>V1.6、V1.7 与纯定投</h2>
+  <p class="prose">三者外部入金完全相同（共 %%INV%% 万元，按 V1.6 定投公式）。纯定投只买不卖。V1.7 = V1.6 + 止盈执行确认（第六部分的规则草案），其余规则一字不改。</p>
+  <div class="tw"><table class="kpi">
+    <thead><tr><th>版本</th><th class="num">资金加权年化 IRR</th><th class="num">期末/投入</th><th class="num">时间加权 Sharpe</th><th class="num">最大回撤</th><th class="num">Calmar</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">纯定投（同入金，不止盈）</th><td class="num">%%IRR0%%%</td><td class="num">%%MUL0%%</td><td class="num">%%SH0%%</td><td class="num">−%%MDD0%%%</td><td class="num">%%CAL0%%</td></tr>
+      <tr><th scope="row">V1.6</th><td class="num">%%IRR16%%%</td><td class="num">%%MUL16%%</td><td class="num">%%SH16%%</td><td class="num">−%%MDD16%%%</td><td class="num">%%CAL16%%</td></tr>
+      <tr class="hl"><th scope="row">V1.7 候选</th><td class="num">%%IRR17%%%</td><td class="num">%%MUL17%%</td><td class="num">%%SH17%%</td><td class="num">−%%MDD17%%%</td><td class="num">%%CAL17%%</td></tr>
+    </tbody></table></div>
+  <p class="meta">IRR 为考虑每日入金的资金加权收益；Sharpe、回撤、Calmar 按剔除入金后的时间加权净值计算。V1.7 的 +0.8 个百分点处在邻域分布的上沿，邻域中位数为 %%MED5%% 个百分点，应按后者形成预期。</p>
+
+  <figure class="figure" style="margin:0">
+    <div class="legend"><span><i style="background:var(--s1)"></i>V1.7 候选</span><span><i style="background:var(--s2)"></i>V1.6</span><span><i style="background:var(--s3)"></i>纯定投</span></div>
+    <svg id="ch1" role="img" aria-label="三种版本的时间加权净值曲线，2014 年至 2026 年"></svg>
+    <figcaption>时间加权净值（剔除入金），周度。悬停查看数值。</figcaption>
+  </figure>
+  <figure class="figure" style="margin:0">
+    <div class="legend"><span><i style="background:var(--s1)"></i>V1.7 候选 持仓占比</span><span><i style="background:var(--s2)"></i>V1.6 持仓占比</span></div>
+    <svg id="ch2" role="img" aria-label="V1.6 与 V1.7 的持仓占比"></svg>
+    <figcaption>持仓占比 p = H/(H+C)。差异集中在 2015、2017–18、2020 年的止盈段：V1.7 卖得更晚、价格更高。</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>一、检验框架：先拆结构，再逐层放指标</h2>
+  <p class="prose">V1.6 的决策可以拆成五层，各层的时间尺度差别很大。图中指标的有效周期是几天到几周，只可能在"执行层"起作用。把它们放到估值层或资金层，属于时间尺度错配。</p>
+  <div class="layers">
+    <div class="layer"><span class="n">估值层<small>年级别</small></span><span>V：EY、BP、DY、ERP 的 5/10 年分位</span><span>决定买卖方向与目标仓位。已有，本次不动。</span></div>
+    <div class="layer"><span class="n">趋势层<small>月级别</small></span><span>U：MA40/80/160 站上票数</span><span>测试凯尔特纳 / ATR 通道突破替换或作为第 4 票：增益约 0，不改。</span></div>
+    <div class="layer"><span class="n">执行层<small>日～周级别</small></span><span>V1.6 中空缺：触发当天即成交</span><span>图中 9 个指标的唯一合理位置。只有"止盈等超买回落"有效。</span></div>
+    <div class="layer"><span class="n">风险层<small>周级别</small></span><span>V1.6 中空缺</span><span>已实现波动率分位：加速回投有害，刹车与随机无异。期权 IV 待补测。</span></div>
+    <div class="layer"><span class="n">资金层<small>日级别</small></span><span>定投金额公式、5 个百分点交易阈值</span><span>定投择时、百分比网格分批：无效或有害。</span></div>
+  </div>
+  <h3>四道关卡（每个结论都必须全部通过）</h3>
+  <div class="gates">
+    <div class="gate"><span class="k">关卡 1 · 大样本信号检验</span><p>脱离策略路径，在同一估值区间内检验信号对未来 20/60 日收益的预测力，Newey-West t 值。样本是全部交易日，而非策略的几十笔交易。</p></div>
+    <div class="gate"><span class="k">关卡 2 · 参数高原</span><p>默认参数事先固定（布林 20/2、RSI 14/30、KDJ 9/20、BIAS 20/5% 等），再跑 3×3 邻域。邻域内 ≥75% 优于基线才算稳健。</p></div>
+    <div class="gate"><span class="k">关卡 3 · 安慰剂</span><p>把真实信号整体循环平移 40 次，频率和聚集形态不变，只破坏与行情的对应。真实信号需排在 ≥90 分位。</p></div>
+    <div class="gate"><span class="k">关卡 4 · 样本外与 PBO</span><p>2014–2019 为样本内，2020–2026 为样本外，增量方向须一致；并用 CSCV 计算回测过拟合概率，叠加分段归因与起点敏感性。</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>二、关卡 1：信号层检验</h2>
+  <p class="prose">左侧：V &lt; 50（回投区）内，超卖信号日之后 60 日收益相对区间均值的超额。右侧：V ≥ 50 内，超买信号日之后 20 日的超额收益。正数表示信号之后涨得更多。</p>
+  <div class="tw"><table>
+    <thead><tr><th>指标<span class="tag">图中编号</span></th><th class="num">超卖→60日超额%</th><th class="num">t 值</th><th class="num">独立事件</th><th class="num">超买→20日超额%</th><th class="num">t 值</th><th class="num">独立事件</th></tr></thead>
+    <tbody>%%ROWS1%%</tbody></table></div>
+  <p class="meta">读法：超卖信号的超额有正有负，没有一个显著；独立事件只有 10–30 次。超买信号之后 20 日几乎全部继续上涨（动量延续），说明在超买当天卖出是吃亏的。这一点正是"等超买回落再卖"的逻辑来源，它来自全样本，而非策略回测。*波动率分位：高分位视为"超卖/恐慌"，低分位视为"超买/平静"。</p>
+</section>
+
+<section>
+  <h2>三、关卡 2–4：放进策略的执行层</h2>
+  <p class="prose">每格为默认参数下相对 V1.6 的年化 IRR 变化（百分点），下方是 3×3 参数邻域中 Calmar 优于基线的比例，以及在 40 个安慰剂中的分位。所有执行过滤都带 20 个交易日的安全阀：触发满 20 日仍未确认则照常执行。底色标出四道关卡全部通过的格子。</p>
+  <div class="tw"><table>
+    <thead><tr><th>指标</th>%%HEAD2%%</tr></thead>
+    <tbody>%%ROWS2%%</tbody></table></div>
+  <figure class="figure" style="margin:0">
+    <svg id="ch3" role="img" aria-label="真实信号与 40 个安慰剂信号的 Calmar 变化对比"></svg>
+    <div class="legend"><span><i style="background:var(--muted);height:8px;width:8px;border-radius:50%"></i>安慰剂（信号循环平移）</span><span><i style="background:var(--s1);height:10px;width:10px;border-radius:50%"></i>真实信号</span></div>
+    <figcaption>相对 V1.6 的 Calmar 变化。上：回投等 RSI 超卖，真实信号落在安慰剂分布的左尾，说明它的"效果"来自延迟。下：止盈等 BIAS 超买回落，真实信号超过全部 40 个安慰剂。</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>四、趋势层、风险层、资金层与对照组</h2>
+  <div class="tw"><table>
+    <thead><tr><th>变体</th><th class="num">ΔIRR 百分点</th><th class="num">Δ最大回撤</th><th class="num">ΔCalmar</th><th class="num">邻域优于基线</th><th class="num">样本内外</th></tr></thead>
+    <tbody>%%STRUCT%%</tbody></table></div>
+  <p class="meta">Δ最大回撤为负表示回撤加深。凯尔特纳作为趋势第 4 票增益 +0.24 个百分点、邻域全部为正，但它只改变了极少数交易日的状态，结构上收益不抵复杂度，不建议加入。</p>
+</section>
+
+<section>
+  <h2>五、组合、消融与稳健性</h2>
+  <p class="prose">下面的组合是看过前面结果后挑出的三个候选，所以组合表本身偏乐观，只用来判断"叠加是否有用"，不当作收益预期。</p>
+  <div class="tw"><table>
+    <thead><tr><th>组合</th><th class="num">IRR</th><th class="num">Δ</th><th class="num">最大回撤</th><th class="num">Calmar</th><th class="num">IS Sharpe</th><th class="num">OOS Sharpe</th></tr></thead>
+    <tbody>%%COMB%%</tbody></table></div>
+  <p class="meta">消融结果：IRR 的增量几乎全部来自"止盈等超买回落"。趋势合成只加 0.05 个百分点；高波动刹车降低 IRR，只在叠加时略改善回撤，而它单独的安慰剂分位只有 18。故 V1.7 只保留一条新规则。</p>
+  <div class="tw"><table>
+    <thead><tr><th>止盈等超买回落：分段归因</th><th class="num">V1.6 区间收益</th><th class="num">V1.7 区间收益</th><th class="num">差</th></tr></thead>
+    <tbody>
+      <tr><td>2014-07 ～ 2015-12 牛市与股灾</td><td class="num">128.9%</td><td class="num">131.4%</td><td class="num pos">+2.5</td></tr>
+      <tr><td>2016 ～ 2018 慢牛与熊市</td><td class="num">10.6%</td><td class="num">13.3%</td><td class="num pos">+2.7</td></tr>
+      <tr><td>2019 ～ 2021 核心资产行情</td><td class="num">63.7%</td><td class="num">71.8%</td><td class="num pos">+8.1</td></tr>
+      <tr><td>2022 ～ 2026-04（无止盈）</td><td class="num">30.1%</td><td class="num">30.5%</td><td class="num flat">+0.4</td></tr>
+    </tbody></table></div>
+  <p class="meta">三轮止盈周期都为正，而非靠单一行情。不同起点（2014-02 至 2018-08 每半年一个，共 10 个）V1.7 的 IRR 与 Calmar 全部高于 V1.6。结构变形（回看 3/5/10 日 × 安全阀 10/20/40 日 × 9 个指标 = 81 种）中 %%POS5%% 的 ΔIRR 为正，中位数 %%MED5%% 个百分点。有效样本只有 3 轮止盈，这个数字说明方向可信，不说明幅度可信。</p>
+</section>
+
+<section>
+  <h2>六、V1.7 规则草案（只改第四节"止盈"）</h2>
+  <div class="rule">
+    <h3>四、止盈（新增：执行确认）</h3>
+    <p>条件、目标仓位 T_s、卖出数量与 V1.6 完全相同。满足止盈条件的交易日，再按下列顺序判断当天是否执行：</p>
+    <p class="mono">BIAS20 = 沪深300 收盘价 ÷ 最近 20 个交易日收盘价简单平均 − 1（取 T−1 日）</p>
+    <p>1. 若 T−1 日 BIAS20 &gt; 5%：暂缓卖出（短期动量仍强）。</p>
+    <p>2. 若 T−6 至 T−2 日中任一日 BIAS20 &gt; 5%，且 T−1 日 BIAS20 ≤ 5%：执行卖出（动量回落）。</p>
+    <p>3. 若止盈条件已连续满足 20 个交易日仍未执行：执行卖出（安全阀）。</p>
+    <p>暂缓当日不算止盈日，照常定投；止盈条件中断时，连续计数清零。回投、定投、数据验证规则不变；BIAS20 只用收盘价，已在第二节的双重验证范围内，不新增数据源。</p>
+    <p class="meta">为什么只用 BIAS：它与 VWAP 偏离等价（相关 1.00），与 ATR 通道、凯尔特纳高度相关（0.96–0.98），四者在这一槽位的结果相近；BIAS 计算最简单、可手工复核，参数也最少。</p>
+  </div>
+</section>
+
+<section>
+  <h2>七、未纳入或不适用</h2>
+  <div class="tw"><table>
+    <thead><tr><th>图中策略</th><th>处理</th><th>原因</th></tr></thead>
+    <tbody>
+      <tr><td>05 VWAP 日内回归</td><td>以 20 日成交量加权均价近似测试</td><td>场外基金按收盘净值成交，无法日内执行；日线版本与 BIAS 等价。</td></tr>
+      <tr><td>10 开盘区间突破反转</td><td>未测试</td><td>需要分钟数据，且场外基金无法在开盘后 30 分钟内按价成交。</td></tr>
+      <tr><td>06 固定价格网格</td><td>只测了 07 百分比网格</td><td>指数点位在 2,000～5,800 间变化，固定点数网格在不同阶段的意义不同；百分比网格已显示与"估值目标仓位"冲突（目标仓位本身就是按估值划分的网格），分批反而少卖。</td></tr>
+      <tr><td>沪深300 期权 IV 分位</td><td>以 20 日已实现波动率分位替代；IV 待补测</td><td>期权数据源（optbbs QVIX、东方财富、中证、上交所、中金所）均被本环境网络策略拦截。IV 数据始于 2019-12，只覆盖约 1.5 个估值周期，补测后也只能作为辅助证据。</td></tr>
+    </tbody></table></div>
+</section>
+
+<section>
+  <h2>八、局限与下一步</h2>
+  <ul class="find">
+    <li>行情数据止于 2026-04-23，估值数据到 2026-10-12；补齐行情后重跑 <span class="mono">python data.py</span> 及各阶段脚本即可。</li>
+    <li>基金净值按"价格指数日收益 + 股息率/244 − 0.5% 年费"近似，未用全收益指数；赎回款按 T+2 到账。这些近似对各版本相同，影响比较的幅度很小。</li>
+    <li>补测期权 IV：本地联网执行 <span class="mono">pip install akshare</span>、<span class="mono">python iv_module.py fetch</span>、<span class="mono">python iv_module.py test</span>。若 IV 版本同样无法排到安慰剂 90 分位以上，风险层保持空缺即可。</li>
+    <li>V1.7 的新规则建议先与 V1.6 并行"影子运行"一个完整止盈周期，再决定是否替换。这是唯一真正的样本外检验。</li>
+  </ul>
+</section>
+</main>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const D = %%DATA%%;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const tip = document.getElementById('tip');
+const NS = 'http://www.w3.org/2000/svg';
+function el(t, a, p){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);p&&p.appendChild(e);return e}
+function showTip(html, ev){tip.innerHTML=html;tip.hidden=false;const w=tip.offsetWidth;let x=ev.clientX+14;if(x+w>innerWidth-8)x=ev.clientX-w-14;tip.style.left=x+'px';tip.style.top=(ev.clientY+12)+'px'}
+
+function lineChart(id, series, opts){
+  const svg=document.getElementById(id); svg.innerHTML='';
+  const W=Math.max(320, svg.parentNode.clientWidth-28), H=opts.h, m={l:44,r:12,t:10,b:24};
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.setAttribute('width','100%');
+  const dates=series[0].d.map(s=>new Date(s)); const n=dates.length;
+  const all=series.flatMap(s=>s.v); const lo=opts.lo??Math.min(...all), hi=opts.hi??Math.max(...all);
+  const x=i=>m.l+(W-m.l-m.r)*i/(n-1), y=v=>m.t+(H-m.t-m.b)*(1-(v-lo)/(hi-lo));
+  for(const t of opts.ticks){el('line',{x1:m.l,x2:W-m.r,y1:y(t),y2:y(t),stroke:css('--rule'),'stroke-width':1},svg);
+    el('text',{x:m.l-6,y:y(t)+4,'text-anchor':'end'},svg).textContent=opts.fmt(t)}
+  let lastY=-1;
+  dates.forEach((d,i)=>{const yr=d.getFullYear(); if(yr!==lastY && d.getMonth()===0 && yr%2===0){lastY=yr;
+    el('text',{x:x(i),y:H-6,'text-anchor':'middle'},svg).textContent=yr}});
+  for(const s of series){const p=s.v.map((v,i)=>(i?'L':'M')+x(i).toFixed(1)+','+y(v).toFixed(1)).join('');
+    el('path',{d:p,fill:'none',stroke:css(s.c),'stroke-width':2,'stroke-linejoin':'round'},svg)}
+  const vl=el('line',{y1:m.t,y2:H-m.b,stroke:css('--muted'),'stroke-width':1,visibility:'hidden'},svg);
+  const dots=series.map(s=>el('circle',{r:4,fill:css(s.c),stroke:css('--paper'),'stroke-width':2,visibility:'hidden'},svg));
+  const hit=el('rect',{x:m.l,y:m.t,width:W-m.l-m.r,height:H-m.t-m.b,fill:'transparent'},svg);
+  hit.addEventListener('mousemove',ev=>{const r=svg.getBoundingClientRect(); const px=(ev.clientX-r.left)*W/r.width;
+    const i=Math.max(0,Math.min(n-1,Math.round((px-m.l)/(W-m.l-m.r)*(n-1))));
+    vl.setAttribute('x1',x(i));vl.setAttribute('x2',x(i));vl.setAttribute('visibility','visible');
+    series.forEach((s,k)=>{dots[k].setAttribute('cx',x(i));dots[k].setAttribute('cy',y(s.v[i]));dots[k].setAttribute('visibility','visible')});
+    showTip(`<b>${series[0].d[i]}</b><br>`+series.map(s=>`${s.name}　${opts.fmt(s.v[i])}`).join('<br>')+(opts.extra?opts.extra(i):''),ev)});
+  hit.addEventListener('mouseleave',()=>{tip.hidden=true;vl.setAttribute('visibility','hidden');dots.forEach(d=>d.setAttribute('visibility','hidden'))});
+}
+
+function strip(){
+  const svg=document.getElementById('ch3'); svg.innerHTML='';
+  const W=Math.max(320, svg.parentNode.clientWidth-28), rows=[["P_A|RSI","A回投过滤|RSI","回投等 RSI 超卖"],["P_B'|BIAS","B'止盈-超买回落|BIAS","止盈等 BIAS 超买回落"]];
+  const H=150, m={l:12,r:12,t:12,b:26};
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.setAttribute('width','100%');
+  const all=rows.flatMap(r=>D.plc[r[0]].concat([D.real[r[1]]])); const lo=-0.06, hi=0.05;
+  const x=v=>m.l+(W-m.l-m.r)*(v-lo)/(hi-lo);
+  for(const t of [-0.06,-0.04,-0.02,0,0.02,0.04]){el('line',{x1:x(t),x2:x(t),y1:m.t,y2:H-m.b,stroke:css(t===0?'--muted':'--rule'),'stroke-width':1},svg);
+    el('text',{x:x(t),y:H-8,'text-anchor':'middle'},svg).textContent=(t>0?'+':'')+t.toFixed(2)}
+  rows.forEach((r,k)=>{const yc=m.t+18+k*56;
+    el('text',{x:m.l,y:yc-12},svg).textContent=r[2];
+    D.plc[r[0]].forEach((v,j)=>{const c=el('circle',{cx:x(v),cy:yc+8+((j%5)-2)*3,r:4,fill:css('--muted'),'fill-opacity':.55},svg);
+      c.addEventListener('mousemove',ev=>showTip(`安慰剂 #${j+1}<br>ΔCalmar ${v>=0?'+':''}${v.toFixed(3)}`,ev));c.addEventListener('mouseleave',()=>tip.hidden=true)});
+    const rv=D.real[r[1]]; const c=el('circle',{cx:x(rv),cy:yc+8,r:6.5,fill:css('--s1'),stroke:css('--paper'),'stroke-width':2},svg);
+    c.addEventListener('mousemove',ev=>showTip(`真实信号<br>ΔCalmar ${rv>=0?'+':''}${rv.toFixed(3)}`,ev));c.addEventListener('mouseleave',()=>tip.hidden=true);
+  });
+}
+
+function draw(){
+  const c=D.c;
+  lineChart('ch1',[{name:'V1.7',d:c['V1.7'].d,v:c['V1.7'].twr,c:'--s1'},{name:'V1.6',d:c['V1.6'].d,v:c['V1.6'].twr,c:'--s2'},{name:'纯定投',d:c['纯定投'].d,v:c['纯定投'].twr,c:'--s3'}],
+    {h:280,lo:0.8,hi:6,ticks:[1,2,3,4,5,6],fmt:v=>v.toFixed(2)});
+  lineChart('ch2',[{name:'V1.7',d:c['V1.7'].d,v:c['V1.7'].pos,c:'--s1'},{name:'V1.6',d:c['V1.6'].d,v:c['V1.6'].pos,c:'--s2'}],
+    {h:200,lo:0,hi:1,ticks:[0,0.2,0.5,1],fmt:v=>Math.round(v*100)+'%',extra:i=>`<br>估值分 V　${D.V[i]??'—'}`});
+  strip();
+}
+draw();
+let rt; addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(draw,150)});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+new MutationObserver(draw).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+</script>
