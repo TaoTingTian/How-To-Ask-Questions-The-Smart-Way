@@ -76,12 +76,17 @@ def atr(h, l, c, n=10):
     return out
 
 
-def compute(df):
+def compute(df, val=None):
+    """val: 可传入预先算好的 (V, roe5)，此时跳过估值分计算，V3 取 V。"""
     n = len(df)
     c, h, l = df.close.values, df.high.values, df.low.values
     ind = {}
-    V, roe5 = valuation_score(df)
-    V3, _ = valuation_score(df, windows=(3,))
+    if val is None:
+        V, roe5 = valuation_score(df)
+        V3, _ = valuation_score(df, windows=(3,))
+    else:
+        V, roe5 = val
+        V3 = V
     ind["V"], ind["V3"], ind["roe5"] = V, V3, roe5
     ma = {k: pd.Series(c).rolling(k).mean().values for k in (20, 40, 80, 160)}
     U = ((c > ma[40]).astype(float) + (c > ma[80]) + (c > ma[160])) / 3.0

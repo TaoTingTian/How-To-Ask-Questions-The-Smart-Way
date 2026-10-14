@@ -45,9 +45,13 @@ class Data:
         z = np.zeros(self.n, bool)
         self.up_ml = mc["up_ml"] if mc is not None else z
         self.down_ml = mc["down_ml"] if mc is not None else z
+        # 修订版复核所需：PE 滚动 5 年中位数（观测中枢）、股债利差 1 年均值
+        import pandas as pd
+        self.pe_med5 = pd.Series(df.pe.values).rolling(5 * YEAR, min_periods=3 * YEAR).median().values
+        self.erp_sm = pd.Series(self.roe5 / df.pb.values - df.y.values).rolling(YEAR, min_periods=20).mean().values
 
 
-def run(D, ver, cost=True, review=True, params=None, warn=None, block=None, record=False):
+def run(D, ver, cost=True, review=True, params=None, warn=None, block=None, record=False, review_rule="old"):
     P = dict(BASE)
     if params:
         P.update(params)
@@ -236,8 +240,14 @@ def run(D, ver, cost=True, review=True, params=None, warn=None, block=None, reco
             lo = D.y[max(j0, i - YEAR + 1): i + 1]
             cond_y = dy_ <= -0.005 and (i - j0) >= YEAR and np.all(lo <= D.y[j0] - 0.005)
             cond_r = (not np.isnan(D.roe5[j0])) and D.roe5[i] / D.roe5[j0] - 1 >= 0.05
-            up = bool(cond_y or cond_r)
-            decisions.append((t, up, review_conds))
+            if review_rule == "new":
+                # 修订版：以 PE 观测中枢 / ROE 的变化为主证据；利率下行只有在股债利差没有同步抬升时才算数
+                cond_pe = (not np.isnan(D.pe_med5[j0])) and D.pe_med5[i] / D.pe_med5[j0] - 1 >= 0.10
+                erp_up = (not np.isnan(D.erp_sm[j0])) and D.erp_sm[i] - D.erp_sm[j0] >= 0.005
+                up = bool(cond_pe or cond_r or (cond_y and not erp_up))
+            else:
+                up = bool(cond_y or cond_r)
+            decisions.append((t, up, review_conds, t0))
             if up and t0 is not None:
                 if cash >= 10:
                     amt = cash * 0.5

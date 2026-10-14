@@ -298,6 +298,66 @@
       yfmt: function (v) { return (v >= 0 ? "+" : "") + (v * 100).toFixed(1); }, lfmt: function (v) { return pp(v); }, tfmt: function (v) { return pp(v) + " pp"; }, aria: "预警应对效果" });
   });
 
+  // ---------------- 第 10 节：中枢漂移专项 ----------------
+  var DD = D.drift, curS = "C1";
+  function scenDraw() {
+    var sc = DD.scen.filter(function (x) { return x.key === curS; })[0], s = sc.series;
+    if (!s) return;
+    var r = function (a) { var b = a[0]; return a.map(function (v) { return v / b; }); };
+    var shade = [{ i0: 0, i1: Math.round(2016 / 20), label: "预热期" }];
+    line(document.getElementById("c_dc1"), {
+      x: s.date, shade: shade,
+      series: [{ name: "PE 中枢", color: "var(--m1)", data: r(s.pe_c) }, { name: "PB 中枢", color: "var(--m2)", data: r(s.pb_c) }, { name: "股息率中枢", color: "var(--neg)", data: r(s.dy_c), dash: "5 4" }],
+      yfmt: function (v) { return v.toFixed(2); }, aria: "估值指标中枢"
+    });
+    line(document.getElementById("c_dc2"), {
+      x: s.date, shade: shade,
+      series: [{ name: "10 年国债", color: "var(--m3)", data: s.y_c }, { name: "股债利差", color: "var(--m1)", data: s.erp_c }],
+      yfmt: function (v) { return v.toFixed(1) + "%"; }, tfmt: function (v) { return v.toFixed(2) + "%"; }, aria: "利率与股债利差"
+    });
+    line(document.getElementById("c_dc3"), {
+      x: s.date, yMin: 0, yMax: 100, shade: shade, refs: [{ y: 70, label: "70" }, { y: 50, label: "50" }],
+      series: [{ name: "原版 V（4 项）", color: "var(--m1)", data: s.V_orig }, { name: "去掉 PB", color: "var(--m2)", data: s.V_nopb, width: 1.6 }, { name: "只用盈利收益率", color: "var(--m3)", data: s.V_ey, width: 1.6, dash: "5 4" }],
+      yfmt: function (v) { return v.toFixed(0); }, tfmt: function (v) { return v.toFixed(1); }, aria: "估值分 V"
+    });
+  }
+  var ssel = document.getElementById("scensel");
+  if (ssel) {
+    DD.scen.forEach(function (x) {
+      var b = document.createElement("button");
+      b.type = "button"; b.id = "scen-" + x.key; b.textContent = x.key + " " + x.name.replace(/（.*?）/g, "");
+      b.setAttribute("aria-pressed", x.key === curS ? "true" : "false");
+      b.addEventListener("click", function () {
+        curS = x.key;
+        ssel.querySelectorAll("button").forEach(function (y) { y.setAttribute("aria-pressed", y === b ? "true" : "false"); });
+        scenDraw();
+      });
+      ssel.appendChild(b);
+    });
+    scenDraw();
+    ["c_dc1", "c_dc2", "c_dc3"].forEach(function (id) { renders.push([document.getElementById(id), function () { scenDraw(); }]); });
+  }
+  reg("c_me", function (el) {
+    el.innerHTML = "";
+    var g = document.createElement("div"); g.className = "oatg"; el.appendChild(g);
+    var names = { pe: "PE 中枢（%）", roe: "ROE（pp）", p: "分红率（pp）", y: "10 年国债（pp）" };
+    var labs = { pe: ["−18", "0", "+18"], roe: ["−3", "0", "+3"], p: ["−8", "0", "+12"], y: ["−1.5", "0", "+1.5"] };
+    var all = [];
+    ["pe", "roe", "p", "y"].forEach(function (k) { VERS.forEach(function (v) { all = all.concat(DD.me[k][v]); }); });
+    var lo = Math.min.apply(null, all) - 0.001, hi = Math.max.apply(null, all) + 0.001;
+    ["pe", "roe", "p", "y"].forEach(function (k, idx) {
+      var box = document.createElement("div");
+      var t = document.createElement("div"); t.className = "oatt"; t.textContent = names[k];
+      var c = document.createElement("div"); c.style.height = "calc(100% - 22px)"; c.style.position = "relative";
+      box.appendChild(t); box.appendChild(c); g.appendChild(box);
+      var showY = idx === 0 || (el.clientWidth < 700 && idx === 2);
+      line(c, { x: labs[k], xcat: true, yMin: lo, yMax: hi, ml: showY ? 46 : 14,
+        series: VERS.map(function (v) { return { name: "V" + v, color: VC[v], data: DD.me[k][v] }; }),
+        yfmt: function (v) { return showY ? (v >= 0 ? "+" : "") + (v * 100).toFixed(1) : ""; }, tfmt: function (v) { return pp(v) + " pp"; }, ticks: 4, aria: names[k] });
+      var lg = c.querySelector(".lgd"); if (lg && idx !== 0) lg.style.visibility = "hidden";
+    });
+  });
+
   var tmr = null;
   if (window.ResizeObserver) {
     var lastW = document.body.clientWidth;

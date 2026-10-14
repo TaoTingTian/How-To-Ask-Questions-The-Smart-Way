@@ -6,6 +6,7 @@ import html
 HERE = os.path.dirname(os.path.abspath(__file__))
 S = json.load(open(os.path.join(HERE, "results", "summary.json")))
 X = json.load(open(os.path.join(HERE, "results", "extra.json")))
+R = json.load(open(os.path.join(HERE, "results", "drift_study.json")))
 VERS = ["1.6", "1.7", "1.8", "1.9"]
 VCOL = {"1.6": "var(--v16)", "1.7": "var(--v17)", "1.8": "var(--v18)", "1.9": "var(--v19)", "bh": "var(--bh)", "dca": "var(--dca)"}
 KIND_CN = {"base": "基准震荡", "slow_up": "缓慢上移", "slow_down": "缓慢下移", "jump_up": "快速跳升",
@@ -87,7 +88,12 @@ for no, ser in S["series"].items():
 ov_js = [dict(no=o["no"], name=o["name"], events=[e for e in o["events"] if e["type"] in ("crisis", "bubble")],
               traps=o["trap_list"], drift=o["drift"]) for o in S["overview"]]
 G = S["grid"]
-DATA = dict(series=series, ov=ov_js,
+_me = {}
+for _f in ("pe", "roe", "p", "y"):
+    _lv = list(R["main_effects"][_f].keys())
+    _me[_f] = dict(levels=_lv, **{v: [R["main_effects"][_f][l][v] for l in _lv] for v in VERS})
+DATA_DRIFT = dict(scen=[dict(key=x["key"], name=x["name"], series=x.get("series")) for x in R["scen"]], me=_me)
+DATA = dict(series=series, ov=ov_js, drift=DATA_DRIFT,
             bars_overall=dict(cats=[f"V{v}" for v in VERS] + ["买入持有", "定额定投"],
                               gross=[OM[v + "|gross"]["xirr"]["mean"] for v in VERS] + [OM["1.6|gross"]["xirr_bh"]["mean"], OM["1.6|gross"]["xirr_dca"]["mean"]],
                               net=[OM[v + "|net"]["xirr"]["mean"] for v in VERS] + [OM["1.6|net"]["xirr_bh"]["mean"], OM["1.6|net"]["xirr_dca"]["mean"]],
@@ -109,6 +115,7 @@ DATA = dict(series=series, ov=ov_js,
                       slow=[sum(S["warn_hold"][f"{v}|{s}|slow_up"]["d"]["mean"] for v in VERS) / 4 for s in ("L1", "L2", "L3", "graded")]),
             )
 
+DRS = {x["key"]: x for x in R["scen"]}
 # ============================================================ 常用数字
 net_main = {v: OM[v + "|net"]["xirr"]["mean"] for v in VERS}
 net_mc = {v: OC[v + "|net"]["xirr"]["mean"] for v in VERS}
@@ -162,6 +169,7 @@ A(f"""
 <li><b>假回归陷阱整体并不伤人，伤人的是陷阱里的“卖出”。</b>四版在假回归窗口内的交易合计是正贡献；亏损集中在“上升趋势假回落”时触发的卖出（卖出亏损率 {pc(T['1.7|up']['sell_loss_rate'],0)} ~ {pc(T['1.6|up']['sell_loss_rate'],0)}）。V1.6 的趋势分最少踩雷（触发概率 {pc(T['1.6|all']['prob'],0)}），V1.7 的周线信号在上升趋势陷阱里触发概率高达 {pc(T['1.7|up']['prob'],0)}。</li>
 <li><b>多周期共振：共振越多越准、越少误报，但也越晚、越容易漏。</b>单周期 → 双周期 → 三周期：准确率 {pc(MCW['both|单周期(任一)|全部']['prec_day'],0)} → {pc(MCW['both|双周期(任两)|全部']['prec_day'],0)} → {pc(MCW['both|三周期共振|全部']['prec_day'],0)}，假阳性率 {pc(MCW['both|单周期(任一)|全部']['fpr'],0)} → {pc(MCW['both|双周期(任两)|全部']['fpr'],0)} → {pc(MCW['both|三周期共振|全部']['fpr'],1)}，漏警率 {pc(MCW['both|单周期(任一)|全部']['miss'],0)} → {pc(MCW['both|双周期(任两)|全部']['miss'],0)} → {pc(MCW['both|三周期共振|全部']['miss'],0)}。</li>
 <li><b>最优应对：只自动执行一级（温和调线），二、三级只用于触发人工复核。</b>留出验证集上，一级应对平均 {pp(DATA['resp']['all'][0])} 个百分点且回撤减少约 2 个百分点；二级、三级与分级组合平均 {pp(DATA['resp']['all'][1])} / {pp(DATA['resp']['all'][2])} / {pp(DATA['resp']['all'][3])}，只有缓慢上移场景受益。</li>
+<li><b>中枢漂移专项：真正决定策略成败的是 PE 中枢本身动没动。</b>在 73 组经济上自洽的“各指标中枢各走各的”组合里，PE 中枢每上移约 20%，四版年化超额平均少 {abs(R['reg']['avg']['pe'])*100:.2f} 个百分点；ROE、分红率、利率在 PE 中枢不变时只把估值分 V 拉偏 1–2 点，对收益影响 ≤ 0.4 个百分点。沪深300 2015–2026 型（降息被盈利下滑对冲）让 V 平均偏低约 {abs(DRS['C1']['dV']['orig']):.1f} 点：策略仓位更重，超额略增、回撤加深约 2 个百分点。</li>
 </ol>
 </section>
 """)
@@ -692,6 +700,190 @@ A(f"""
 </section>
 """)
 
+
+# ============================================================ 10. 中枢漂移专项研究
+PRM = R["params"]
+
+
+def dexcell(x, se_=None, scale=0.012):
+    return f'<td{heat(x, scale)}>{pp(x)}' + (f'<small>± {se_*100:.2f}</small>' if se_ is not None else "") + "</td>"
+
+
+def pegroup(k):
+    a = DRS[k]["analytic"]["pe"]
+    return "up" if a > 0.05 else ("down" if a < -0.05 else "flat")
+
+
+GRP_CN = {"up": "PE 中枢上移", "down": "PE 中枢下移", "flat": "PE 中枢基本不动、其他指标各走各的"}
+import gen2 as _g2
+unit = [("10 年国债 +1pp", dict(y=0.01)), ("要求的风险溢价 +1pp", dict(rp=0.01)), ("ROE +1pp", dict(roe=0.01)), ("分红率 +5pp", dict(p=0.05))]
+rows = []
+for lab, dr in unit:
+    a = _g2.analytic(dr)
+    rows.append([f'<td class="l">{lab}</td>', pp(a["pe"], 1) + "%", pp(a["pb"], 1) + "%", pp(a["dy"], 1) + "%", pp(a["ey"], 1) + "%", pp(a["erp"]) + " pp", pp(a["g"]) + " pp"])
+tbl_unit = table(["驱动因素变化", "PE 中枢", "PB 中枢", "股息率中枢", "盈利收益率", "股债利差", "每股收益增速"], rows, "num",
+                 note=f"参数：股票久期 D = {PRM['D']:g}，增长传导 κ = {PRM['kappa']:g}，分红率直接弹性 λ = {PRM['lam']:.2f}（使分红率变化在基准 ROE 下对估值中性）；基准 ROE {PRM['roe0']*100:g}%、分红率 {PRM['p0']*100:g}%、国债 {PRM['y0']*100:g}%、PE 中枢 13 倍、每股收益增速 {PRM['g0']*100:g}%。")
+c1 = DRS["C1"]["analytic"]
+tbl_cal = table(["指标", "沪深300 实际（2015 年后 / 2011 年起）", "模拟情景 C1（12 年后）", "方向"], [
+    ['<td class="l">PE 中枢</td>', "11–13.3 倍，基本稳定", pp(c1["pe"], 1) + "%", "一致"],
+    ['<td class="l">PB 中枢</td>', "2.95 → 1.38（−53%，含 2011–14 年 PE 中枢下移）", pp(c1["pb"], 1) + "%", "一致"],
+    ['<td class="l">ROE 中枢</td>', "15.3% → 10.8%", "12% → 8.5%", "一致"],
+    ['<td class="l">股息率中枢</td>', "1.5% → 2.76%", pp(c1["dy"], 1) + "%", "一致"],
+    ['<td class="l">10 年国债中枢</td>', "3.5% → 2.3%", "−1.2 pp", "一致"],
+    ['<td class="l">股债利差中枢</td>', "升至约 5.7 pp", pp(c1["erp"]) + " pp", "一致"],
+    ['<td class="l">每股收益增速</td>', "年化约 3.4%", f"{(PRM['g0']+c1['g'])*100:.1f}%（基准 {PRM['g0']*100:g}%）", "一致"],
+], "txt", note="模拟取保守幅度；实际 PB、股息率的变化里还叠加了 2011–2014 年 PE 中枢下移（泡沫期估值移出窗口）的影响。")
+
+rows = []
+for x in R["scen"]:
+    a = x["analytic"]
+    sp = "，".join({"y": "利率", "rp": "风险溢价"}[k] + "快速" for k, v in x["speeds"].items() if v == "fast")
+    rows.append([f'<td class="l"><b>{x["key"]}</b> {esc(x["name"])}<small>{esc(x["desc"])}{("；" + sp) if sp else ""}</small></td>',
+                 f'<td{heat(a["pe"],0.3)}>{pp(a["pe"],0)}%</td>', f'<td{heat(a["pb"],0.5)}>{pp(a["pb"],0)}%</td>', f'<td{heat(-a["dy"],0.5)}>{pp(a["dy"],0)}%</td>',
+                 f'<td{heat(-a["erp"],0.03)}>{pp(a["erp"])}</td>', pp(a["g"])])
+tbl_scen = table(["情景（12 年缓慢完成；“快速”= 2 个月内完成）", "PE 中枢", "PB 中枢", "股息率中枢", "股债利差（pp）", "盈利增速（pp）"], rows, "num",
+                 note="终点相对起点的理论中枢变化。底色：红 = 变贵方向，绿 = 变便宜方向（股息率、股债利差上升代表变便宜）。")
+
+rows = []
+for x in R["scen"][1:]:
+    dp = x["dpct"]
+    rows.append([f'<td class="l"><b>{x["key"]}</b> {esc(x["name"])}</td>'] +
+                [f'<td{heat(dp[k],12)}>{dp[k]:+.1f}</td>' for k in ("ey", "bp", "dy", "erp")] +
+                [f'<td{heat(x["dV"]["orig"],10)}><b>{x["dV"]["orig"]:+.1f}</b></td>', f'<td{heat(x["dV_post"]["orig"],10)}>{x["dV_post"]["orig"]:+.1f}</td>',
+                 f'{x["corr"]["orig"]:.2f}'])
+tbl_vbias = table(["情景", "盈利收益率分位", "PB 分位", "股息率分位", "股债利差分位", "V 偏移（漂移期）", "V 偏移（漂移结束后 9 年）", "V 与真实偏离的相关系数"], rows, "num",
+                  note=f"与基准情景 S0 同种子配对，单位：V 点（0–100）。正 = 看起来更贵，负 = 看起来更便宜。基准情景下 V 与真实估值偏离的相关系数为 {DRS['S0']['corr']['orig']:.2f}。")
+
+rows = []
+for x in R["scen"][1:]:
+    pf = x["perf"]
+    rows.append([f'<td class="l"><b>{x["key"]}</b> {esc(x["name"])}</td>'] +
+                [dexcell(pf[f"orig|{v}"]["dex"], pf[f"orig|{v}"]["dex_se"]) for v in VERS] +
+                [pp(sum(pf[f"orig|{v}"]["dmdd"] for v in VERS) / 4, 1), pp(sum(pf[f"orig|{v}"]["didle"] for v in VERS) / 4, 0) + "%"])
+tbl_perf = table(["情景"] + [vtag(v) for v in VERS] + ["最大回撤变化（pp，四版平均）", "资金池闲置变化（四版平均）"], rows, "num",
+                 note=f"单元格：相对买入持有的年化超额，减去同种子基准情景下的超额（百分点 / 年，± 标准误）。每个情景 {PRM['N1']} 条 30 年路径。")
+
+reg = R["reg"]
+FN = [("pe", "PE 中枢 ±18%"), ("roe", "ROE ±3pp"), ("p", "分红率 −8 / +12pp"), ("y", "10 年国债 ±1.5pp")]
+rows = []
+for f, lab in FN:
+    rows.append([f'<td class="l">{lab}</td>', f'<td{heat(reg["dV"][f],5)}>{reg["dV"][f]:+.2f}</td>'] +
+                [f'<td{heat(reg[v][f],0.008)}>{pp(reg[v][f])}</td>' for v in VERS] + [f'<td{heat(reg["avg"][f],0.008)}><b>{pp(reg["avg"][f])}</b></td>'])
+rows.append(['<td class="l">模型解释度 R²</td>', f'{reg["dV"]["r2"]:.2f}'] + [f'{reg[v]["r2"]:.2f}' for v in VERS] + [f'{reg["avg"]["r2"]:.2f}'])
+tbl_reg = table(["因子（每上升一档）", "V 偏移（点）"] + [vtag(v) for v in VERS] + ["四版平均"], rows, "num",
+                note=f"对 {R['n_kept']} 组自洽组合做线性回归（因子编码 −1 / 0 / +1，四个因子同时放入）。版本列：相对买入持有的年化超额变化（百分点）。R² 接近 1 说明各因子的影响基本可以相加，交互作用很小。")
+excl = [c for c in R["combos"] if not c["kept"]]
+
+GV = {}
+for g in ("up", "down", "flat"):
+    ks = [x["key"] for x in R["scen"][1:] if pegroup(x["key"]) == g]
+    GV[g] = ks
+rows = []
+for g in ("up", "down", "flat"):
+    ks = GV[g]
+    for vk, lab in (("orig", "原版（4 项）"), ("nopb", "去掉 PB（3 项）"), ("ey", "只用盈利收益率")):
+        dvb = sum(DRS[k]["dV"][vk] for k in ks) / len(ks)
+        cor = sum(DRS[k]["corr"][vk] for k in ks) / len(ks)
+        dvr = sum(DRS[k]["perf"][f"{vk}|{v}"]["dvar"] for k in ks for v in VERS) / (4 * len(ks))
+        rows.append([f'<td class="l">{GRP_CN[g]}<small>{"、".join(ks)}</small></td>' if vk == "orig" else "<td></td>", lab,
+                     f'{dvb:+.1f}', f'{cor:.2f}', "—" if vk == "orig" else f'<td{heat(dvr,0.003)}>{pp(dvr)}</td>'])
+b0 = DRS["S0"]
+for vk, lab in (("orig", "原版（4 项）"), ("nopb", "去掉 PB（3 项）"), ("ey", "只用盈利收益率")):
+    dvr = sum(b0["perf"][f"{vk}|{v}"]["dvar"] for v in VERS) / 4
+    rows.append(['<td class="l">基准 S0</td>' if vk == "orig" else "<td></td>", lab, "0.0", f'{b0["corr"][vk]:.2f}', "—" if vk == "orig" else f'<td{heat(dvr,0.003)}>{pp(dvr)}</td>'])
+tbl_vvar = table(["情景组", "估值分 V 的构成", "V 平均偏移（点）", "与真实偏离的相关系数", "年化收益相对原版（pp，四版平均）"], rows, "num")
+
+rows = []
+for v in ["1.7", "1.8", "1.9"]:
+    agg = {k: 0 for k in ("n_old", "up_old", "false_up_old", "miss_old", "n_new", "up_new", "false_up_new", "miss_new", "true_up")}
+    go = gn = 0.0
+    for x in R["scen"]:
+        rv = x["review"][v]
+        for k in agg:
+            agg[k] += rv[k]
+        go += rv["gain_old"]
+        gn += rv["gain_new"]
+    m = len(R["scen"])
+    rows.append([vtag(v), "原规则（国债 / ROE）", num(agg["n_old"]), num(agg["up_old"]), num(agg["false_up_old"]), num(agg["miss_old"]),
+                 pc(1 - (agg["false_up_old"] + agg["miss_old"]) / agg["n_old"], 1), pp(go / m)])
+    rows.append(["", "修订规则（PE 滚动中位数为主）", num(agg["n_new"]), num(agg["up_new"]), num(agg["false_up_new"]), num(agg["miss_new"]),
+                 pc(1 - (agg["false_up_new"] + agg["miss_new"]) / agg["n_new"], 1), pp(gn / m)])
+tbl_rev2 = table(["版本", "复核判断规则", "复核次数", "判为中枢上移", "其中误判", "漏判", "判断准确率", "复核增益（pp，18 情景平均）"], rows, "num",
+                 note="“真上移” = 本轮首次止盈到复核结论日之间真实 PE 中枢上升 ≥ 8%。修订规则：PE 滚动 5 年中位数上升 ≥10% 或 ROE 5 年均值上升 ≥5%，国债下行仅在股债利差未同步上升 ≥0.5pp 时计入。")
+c1r = DRS["C1"]["review"]["1.8"]
+
+up_dex = sum(DRS[k]["perf"][f"orig|{v}"]["dex"] for k in GV["up"] for v in VERS) / (4 * len(GV["up"]))
+dn_dex = sum(DRS[k]["perf"][f"orig|{v}"]["dex"] for k in GV["down"] for v in VERS) / (4 * len(GV["down"]))
+fl_dex = sum(DRS[k]["perf"][f"orig|{v}"]["dex"] for k in GV["flat"] for v in VERS) / (4 * len(GV["flat"]))
+fl_mdd = sum(DRS[k]["perf"][f"orig|{v}"]["dmdd"] for k in GV["flat"] for v in VERS) / (4 * len(GV["flat"]))
+C1P = DRS["C1"]["perf"]
+A(f"""
+<section id="s10">
+<h2><span class="sn">10</span>中枢漂移专项研究：各指标中枢各走各的</h2>
+{callout("一句话", f"按经济规律推导，“中枢漂移”可以只发生在 PB、股息率、股债利差上，而 PE 中枢纹丝不动——沪深300 2015–2026 年就是这样。模拟 18 个情景、{R['n_kept']} 组自洽组合后发现：<b>决定策略成败的是 PE 中枢本身</b>（每档 ±18% 让四版年化超额变化约 ∓{abs(R['reg']['avg']['pe'])*100:.2f} 个百分点）；其他指标的中枢单独漂移只会把 V 拉偏几点，让策略仓位更重或更轻，对收益影响小，但会改变回撤。V 识别真实贵贱的能力几乎不受影响（相关系数 {min(x['corr']['orig'] for x in R['scen']):.2f}–{max(x['corr']['orig'] for x in R['scen']):.2f}，基准 {DRS['S0']['corr']['orig']:.2f}）。")}
+<h3>10.1 经济框架：四个驱动，五个中枢</h3>
+<p>之前的模拟把所有指标绑在 PE 中枢上一起动。现实中它们由四个更底层的驱动共同决定：<b>10 年国债收益率</b>、<b>投资者要求的风险溢价</b>（风险偏好）、<b>ROE</b>（盈利能力）、<b>分红率</b>（分配政策）。各指标中枢通过两类关系联系起来：</p>
+<div class="defs">
+<div><b>恒等式（必然成立）</b><span>PB = PE × ROE；股息率 = 分红率 ÷ PE；盈利收益率 ≈ 1 ÷ PE；股债利差 = 盈利收益率 − 国债收益率</span></div>
+<div><b>估值规律（股利折现的线性近似）</b><span>PE 中枢的对数变化 = 久期 × (−Δ国债 − Δ风险溢价 + Δ盈利增速) + 分红率效应；盈利增速 = ROE × (1 − 分红率) 的一半传导</span></div>
+<div><b>速度约束</b><span>ROE 与分红率是结构性变量，只能慢慢变；利率与风险溢价可以慢变，也可以在政策或冲击下 2 个月内跳变</span></div>
+</div>
+<p>每个驱动单独变化时，各指标中枢的反应如下。可以看到“各走各的”是常态：利率和风险溢价同等地影响 PE，但只有风险溢价会改变股债利差；ROE 主要改变 PB；分红率几乎只改变股息率。</p>
+{tbl_unit}
+<p><b>用沪深300 实际情况校准：</b>你提供的 2015–2026 年数据（PE 中枢稳定、PB 中枢随 ROE 下行、股息率中枢上升、国债下行而 PE 没涨、股债利差抬升）可以被情景 C1 复现：降息对 PE 的推升被 ROE 下滑带来的增速下降抵消，股债利差因此被动抬升。</p>
+{tbl_cal}
+<h3>10.2 情景设计</h3>
+<p>18 个具名情景：7 个单因素、6 个经济组合、4 个快速版本，外加基准。每个情景 {PRM['N1']} 条 30 年路径，与基准情景使用完全相同的随机种子（相同的短期波动、危机和假回归），差别只在中枢，因此任何结果差异都可以归因于中枢漂移。漂移从第 9 年开始、12 年内完成；快速版本在第 12 年用 2 个月完成。</p>
+{tbl_scen}
+<h3>10.3 情景浏览器</h3>
+<p class="muted">选择情景，查看各指标中枢的走法（第一张图以起点为 1）、利率与股债利差中枢，以及三种构成的估值分 V（120 日均值）。以种子 {5000} 为例。</p>
+<div class="seg" role="group" aria-label="选择情景" id="scensel"></div>
+<div class="explorer ex2">
+{chart('c_dc1', '估值指标中枢（起点 = 1）', 'PE、PB、股息率的中枢路径', 230)}
+{chart('c_dc2', '利率与股债利差中枢（%）', '股债利差 = 1/PE 中枢 − 国债中枢', 230)}
+{chart('c_dc3', '估值分 V 的三种构成（120 日均值）', '原版 4 项 / 去掉 PB / 只用盈利收益率', 240)}
+</div>
+<h3>10.4 V 被拉偏了多少</h3>
+<p>V 是四个分项分位数的平均，所以中枢漂移对 V 的影响 = 各分项被拉偏的平均。PE 中枢不动时（S7、C1、F4），盈利收益率分位几乎不变，但 PB、股息率、股债利差分位被拉向“便宜”，V 平均偏低 {abs(DRS['C1']['dV']['orig']):.1f} 点（C1）。漂移结束后，5~10 年窗口逐渐吸收新中枢，偏移收敛到 {DRS['C1']['dV_post']['orig']:+.1f} 点。</p>
+{tbl_vbias}
+<h3>10.5 策略受到的影响</h3>
+<div class="grid2">
+<div><p><b>PE 中枢上移</b>（{"、".join(GV['up'])}）：四版年化超额平均 {pp(up_dex)} 个百分点，资金池闲置增加——卖出后等不到回投机会。</p>
+<p><b>PE 中枢下移</b>（{"、".join(GV['down'])}）：平均 {pp(dn_dex)} 个百分点，相对买入持有占优，但最大回撤加深，因为 V 偏低让策略更早、更多地回投。</p></div>
+<div><p><b>PE 不动、其他指标各走各的</b>（{"、".join(GV['flat'])}）：平均 {pp(fl_dex)} 个百分点，最大回撤 {pp(fl_mdd,1)} 个百分点。C1 中 V1.7 回撤多 {C1P['orig|1.7']['dmdd']*100:.1f} 个百分点。风险不是少赚，而是“以为便宜、仓位偏重”。</p>
+<p><b>快与慢：</b>同样的利率下行，快速版（F1）对收益的伤害约是缓慢版（S1）的一半；风险溢价急升（F2）比缓慢上升（S3）多出约 1.5–3 个百分点回撤。</p></div>
+</div>
+{tbl_perf}
+<h3>10.6 组合全景：{R['n_kept']} 组自洽组合</h3>
+<p>把 PE 中枢、ROE、分红率、国债四个因子各取三档（下 / 不变 / 上）做全组合，风险溢价作为差额吸收项，用来满足估值规律。{len(excl)} 组需要风险溢价变化超过 ±3 个百分点才能成立（例如“PE 中枢下降、ROE 上升、利率下降”），视为经济上不自洽，予以剔除。每组 {PRM['N2']} 条路径，与中心组合配对比较。</p>
+{chart('c_me', '各因子的主效应：相对买入持有的年化超额变化', '其余因子在所有自洽组合上取平均；四个小图共用纵轴', 280)}
+{tbl_reg}
+<p><b>排序很清楚：</b>PE 中枢 ≫ ROE &gt; 分红率 ≈ 利率。ROE 在 PE 中枢固定时仍有影响，来自两方面：PB 分位被拉偏，以及盈利增速变化改变了买入持有的回报节奏；分红率和利率在 PE 中枢固定时，只是让股息率或股债利差“看起来”更便宜或更贵。</p>
+<h3>10.7 应对方案检验</h3>
+<div class="grid2">
+<div>
+<h4>改 V 的构成？不建议</h4>
+<p>去掉 PB 或只用盈利收益率，确实能减少 PE 不动时的偏移（C1：{DRS['C1']['dV']['orig']:+.1f} → {DRS['C1']['dV']['nopb']:+.1f} → {DRS['C1']['dV']['ey']:+.1f} 点），但 V 与真实偏离的相关系数下降，收益在大多数情景下略低。四项平均本身就是对单一指标漂移的分散。</p>
+</div>
+<div>
+<h4>改第十节复核规则？不建议（收回上一轮的建议）</h4>
+<p>上一轮我提出“以 PE 滚动中位数为主证据、利率只作辅助”。检验结果更差：PE 滚动中位数在普通周期里也常涨 10%，误判上移从每版约 {sum(x['review']['1.8']['false_up_old'] for x in R['scen'])} 次增加到约 {sum(x['review']['1.8']['false_up_new'] for x in R['scen'])} 次（V1.8），复核增益由约 0 变为负。原规则在 C1 型情景下 {c1r['n_old']} 次复核只误判 {c1r['false_up_old']} 次，因为“下降 ≥50bp 且持续 1 年以上”加上必须先触发复核，已经足够保守。</p>
+</div>
+</div>
+{tbl_vvar}
+{tbl_rev2}
+<h3>10.8 专项结论</h3>
+<ol class="tight">
+<li><b>中枢漂移要拆开看。</b>先问 PE 中枢动没动，再看 PB、股息率、股债利差的中枢是否因为 ROE、分红率、利率而单独移动。只有前者会系统性地改变策略收益。</li>
+<li><b>PE 中枢上移是唯一的系统性威胁</b>：每 18% 让年化超额少约 {abs(R['reg']['avg']['pe'])*100:.2f} 个百分点；即便 PE 中枢不变，ROE 每上一档（+3pp）也会再少约 {abs(R['reg']['avg']['roe'])*100:.2f} 个百分点。</li>
+<li><b>“成分漂移、PE 不动”只改变风险，不改变收益</b>：V 偏低几点，策略仓位更重，超额略增，回撤加深 0.7–2.8 个百分点。沪深300 当前正处于这种状态，实盘时可预期策略比“看起来”更进取。</li>
+<li><b>V 的识别能力稳健</b>：各种组合下与真实偏离的相关系数仍在 0.84 以上；保留四项构成，不必为单一指标漂移改公式。</li>
+<li><b>可操作的监控</b>：每季度分别计算四个分项的分位数；若 PB、股息率、股债利差的分位长期比盈利收益率分位低 5 点以上，说明正处于“成分漂移”，可把回投估值线临时下调 3–5 点，以抵消 V 偏低带来的额外仓位。</li>
+</ol>
+<p class="tnote">局限：估值规律采用线性近似，久期、增长传导系数为假设值；“真实中枢”只在模拟中可知。结论用于理解方向和相对大小，不宜直接作为精确的数值预测。</p>
+</section>
+""")
+
 # ============================================================ 附录
 A(f"""
 <section id="appx" class="appx">
@@ -723,7 +915,7 @@ A(f"""
 
 BODY = "\n".join(parts)
 TOC = [("tldr", "结论速览"), ("s1", "1 模拟数据概览"), ("s2", "2 全周期总览"), ("s3", "3 中枢漂移速度"), ("s4", "4 假回归陷阱"),
-       ("s5", "5 极端压力测试"), ("s6", "6 参数鲁棒性"), ("s7", "7 多周期预警"), ("s8", "8 版本迭代评估"), ("s9", "9 结论与建议"), ("appx", "附录")]
+       ("s5", "5 极端压力测试"), ("s6", "6 参数鲁棒性"), ("s7", "7 多周期预警"), ("s8", "8 版本迭代评估"), ("s9", "9 结论与建议"), ("s10", "10 中枢漂移专项"), ("appx", "附录")]
 toc_html = "".join(f'<a href="#{a}">{b}</a>' for a, b in TOC)
 
 CSS = open(os.path.join(HERE, "report_assets", "style.css"), encoding="utf-8").read()
