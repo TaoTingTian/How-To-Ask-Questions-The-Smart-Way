@@ -47,15 +47,23 @@ class Data:
         self.down_ml = mc["down_ml"] if mc is not None else z
         # 修订版复核所需：PE 滚动 5 年中位数（观测中枢）、股债利差 1 年均值
         import pandas as pd
+        self.up_long = mc["up_long"] if mc is not None else z
+        # 结构优化所需：V 一年均值持续偏高（自适应窗口）、分项偏差（盈利收益率分位 − 其余三项分位均值，一年均值）
+        self.vhi = pd.Series(self.V).rolling(YEAR, min_periods=60).mean().values > 65
+        self.gap = np.nan_to_num(ind["gap"]) if "gap" in ind else np.zeros(self.n)
         self.pe_med5 = pd.Series(df.pe.values).rolling(5 * YEAR, min_periods=3 * YEAR).median().values
         self.erp_sm = pd.Series(self.roe5 / df.pb.values - df.y.values).rolling(YEAR, min_periods=20).mean().values
 
 
-def run(D, ver, cost=True, review=True, params=None, warn=None, block=None, record=False, review_rule="old"):
+def run(D, ver, cost=True, review=True, params=None, warn=None, block=None, record=False, review_rule="old", opt=()):
     P = dict(BASE)
     if params:
         P.update(params)
     SL, RB, TH, FL = P["SL"], P["RB"], P["TH"], P["FL"]
+    FL0 = FL
+    opt = set(opt)
+    last_rebuy = last_sell = START
+    last_to = -10 ** 9
     two_stage = ver in ("1.8", "1.9")
     uses_U_sell = ver in ("1.6", "1.8", "1.9")
     uses_S = ver in ("1.7", "1.8", "1.9")
@@ -185,16 +193,22 @@ def run(D, ver, cost=True, review=True, params=None, warn=None, block=None, reco
             prev_up = upc
         SLe = SL + 5 if l1_up else SL
         RBe = RB - 5 if (l1_up or l1_dn) else RB
+        # ---- 结构优化开关 ----
+        FL = 0.40 if ("dyn_floor" in opt and D.up_long[i]) else FL0
+        if "gap" in opt and D.gap[i] > 5:
+            RBe -= min(5.0, D.gap[i] / 2)
         reb_mult = 0.5 if (l1_up or l1_dn) else 1.0
 
         # ---------- 读指标 ----------
         if valid or Vc is None:
-            Vc = (V3arr[i] if use_v3 else Varr[i])
+            Vc = (V3arr[i] if (use_v3 or ("adapt_win" in opt and D.vhi[i])) else Varr[i])
             Uc = Uarr[i]
             Sc, Bc = int(Sarr[i]), int(Barr[i])
         else:
             Sc = Bc = 0
         # 在途款到账（T+3）
+        if "cash_yield" in opt and cash > 0:          # 资金池放货币基金：年化 = 国债 − 1pp，最低 1%
+            cash *= 1 + max(D.y[i] - 0.01, 0.01) / YEAR
         while transit and transit[0][0] <= t:
             amt = transit.pop(0)[1]
             cash += amt
@@ -331,6 +345,7 @@ def run(D, ver, cost=True, review=True, params=None, warn=None, block=None, reco
                     transit.append([t + 3, proceeds])
                     transit_sum += proceeds
                     stop_day = True
+                    last_sell = t
                     stop_days += 1
                     n_sell += 1
                     sell_amt += gross
@@ -357,10 +372,20 @@ def run(D, ver, cost=True, review=True, params=None, warn=None, block=None, reco
                 if amt >= 10:
                     cash -= amt
                     buy(t, amt, "rebuy")
+                    last_rebuy = t
                     n_rebuy += 1
                     turnover_amt += amt
                     if record:
                         trades.append((t, "rebuy", amt, close[t], p))
+
+        # ---------- 超时分批回补（结构优化）：资金池闲置 2 年且不在止盈区，每月回补 1/12 ----------
+        if ("timeout" in opt and valid and not blocked and not stop_day and cash >= 10 and Vc < SL
+                and t - max(last_rebuy, last_sell) >= 2 * YEAR and t - last_to >= 21 and cash / (H + C) > 0.10):
+            amt = cash / 12
+            cash -= amt
+            buy(t, amt, "rebuy")
+            last_to = t
+            turnover_amt += amt
 
         # ---------- 定投 ----------
         if not stop_day:
