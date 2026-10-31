@@ -480,3 +480,248 @@ def xirr(inflow, final, start=START):
         else:
             hi = mid
     return (lo + hi) / 2
+
+
+# ======================================================================
+# V2.0：每日净额（定投 + 平缓回投 − 平缓卖出 / 果断卖出），同一天只下一笔单
+# ======================================================================
+def run_v2(D, cost=True, review=True, decisive=True, record=False, params=None):
+    """按《沪深300 策略 V2.0 · 买入与卖出规则》逐日执行。
+    D.V 应为 V2.0 口径的估值分（EY、BP、DY、IRP = DY + g − y）。decisive=False 为“去掉果断卖出”对照。"""
+    P = dict(FL=0.20, SELL_LO=65.0, SELL_HI=85.0, BUY_HI=50.0, BUY_LO=20.0, SPEED=0.04, TH=0.05)
+    if params:
+        P.update(params)
+    FL = P["FL"]
+    n = D.n
+    nav, close, tr = D.nav, D.close, D.tr
+    Varr, Uarr = D.V, D.U
+    atr_rel = D.atr_rel
+    c_sub = 0.001 if cost else 0.0
+    c_comm = 0.001 if cost else 0.0
+    c_imp_k = 0.5 if cost else 0.0
+
+    lots_day = [START - 1000]
+    lots_sh = [INIT_CAPITAL / nav[START - 1]]
+    head = 0
+    shares = lots_sh[0]
+    cash = 0.0
+    transit = []
+    transit_sum = 0.0
+    E = 0.0
+    Vmax = None
+    Vc = Uc = None
+    t0 = None
+    sold_sh = sold_trsh = 0.0
+    no_more_sell = False
+    in_review = False
+    review_end = -1
+    review_conds = ()
+    sup = {"A": -1, "B": -1}
+
+    inflow = np.zeros(n)
+    total = np.zeros(n)
+    pser = np.zeros(n)
+    cashser = np.zeros(n)
+    impday = np.zeros(n)
+    costday = np.zeros(n)
+    units = INIT_CAPITAL
+    twr = np.ones(n)
+    cost_sub = cost_red = cost_comm = cost_imp = 0.0
+    cost_by_kind = {"sell": 0.0, "rebuy": 0.0, "dca": 0.0, "special": 0.0}
+    n_sell = n_rebuy = n_special = n_decisive = 0
+    sell_amt = sell_px = buy_amt = buy_px = 0.0
+    turnover_amt = 0.0
+    trades = [] if record else None
+    triggers, decisions = [], []
+    total[START - 1] = INIT_CAPITAL
+
+    def do_buy(t, amount, kinds):
+        """kinds: {kind: 份额占比}，用于成本归类。"""
+        nonlocal shares, cost_sub, cost_comm, cost_imp
+        comm = amount * c_comm
+        imp = amount * c_imp_k * atr_rel[t]
+        net = amount - comm - imp
+        sh = net / (1 + c_sub) / nav[t]
+        sub = net - net / (1 + c_sub)
+        cost_sub += sub
+        cost_comm += comm
+        cost_imp += imp
+        for k, w in kinds.items():
+            cost_by_kind[k] += (sub + comm + imp) * w
+        impday[t] += imp
+        costday[t] += sub + comm + imp
+        lots_day.append(t)
+        lots_sh.append(sh)
+        shares += sh
+
+    def do_sell(t, value, i):
+        nonlocal shares, head, cash, transit_sum, cost_red, cost_comm, cost_imp
+        q = value / nav[i]
+        got = gross = red = 0.0
+        k = head
+        while q > 1e-12 and k < len(lots_sh) and lots_day[k] <= t - 30:
+            take = min(q, lots_sh[k])
+            v = take * nav[t]
+            red += v * (redemption_rate(t - lots_day[k]) if cost else 0.0)
+            gross += v
+            lots_sh[k] -= take
+            q -= take
+            got += take
+            if lots_sh[k] <= 1e-12:
+                k += 1
+        head = k
+        if got <= 0:
+            return 0.0, 0.0
+        comm = gross * c_comm
+        imp = gross * c_imp_k * atr_rel[t]
+        proceeds = gross - red - comm - imp
+        cost_red += red
+        cost_comm += comm
+        cost_imp += imp
+        cost_by_kind["sell"] += red + comm + imp
+        impday[t] += imp
+        costday[t] += red + comm + imp
+        shares -= got
+        transit.append([t + 3, proceeds])
+        transit_sum += proceeds
+        return got, gross
+
+    for t in range(START, n):
+        i = t - 1
+        valid = not D.fail[i]
+        if valid or Vc is None:
+            Vc = Varr[i]
+            Uc = Uarr[i]
+        while transit and transit[0][0] <= t:
+            amt = transit.pop(0)[1]
+            cash += amt
+            transit_sum -= amt
+        if Vmax is None or Vc < 50:
+            Vmax = Vc
+        else:
+            Vmax = max(Vmax, Vc)
+        if Vc >= 50:
+            E = 0.0
+        if Vc < 50 and t0 is not None:
+            t0 = None
+            sold_sh = sold_trsh = 0.0
+            no_more_sell = False
+            in_review = False
+        H = shares * nav[i]
+        C = cash + transit_sum
+        p = H / (H + C)
+
+        # 第九节复核结论
+        if review and in_review and t == review_end:
+            in_review = False
+            j0 = max(t0 - 1, 0) if t0 is not None else i
+            lo_ = D.y[max(j0, i - YEAR + 1): i + 1]
+            cond_y = (D.y[i] - D.y[j0] <= -0.005) and (i - j0) >= YEAR and np.all(lo_ <= D.y[j0] - 0.005)
+            cond_r = (not np.isnan(D.roe5[j0])) and D.roe5[i] / D.roe5[j0] - 1 >= 0.05
+            up = bool(cond_y or cond_r)
+            decisions.append((t, up, review_conds, t0))
+            if up and t0 is not None:
+                if cash >= 10:
+                    amt = cash * 0.5
+                    cash -= amt
+                    do_buy(t, amt, {"special": 1.0})
+                    n_special += 1
+                    turnover_amt += amt
+                    buy_amt += amt
+                    buy_px += amt * close[t]
+                    if record:
+                        trades.append((t, "review_buy", amt, close[t], p))
+                no_more_sell = True
+            else:
+                for cnd in review_conds:
+                    sup[cnd] = t + YEAR
+
+        # 定投 D（每天都入金）
+        x = clip01((70 - Vc) / 70)
+        xb = x ** 2.5
+        extra = min(700 * clip01((15 - Vc) / 15) * xb, 50000 - E)
+        Dd = 300 * xb + extra
+        E += extra
+        inflow[t] = Dd
+
+        # 平缓回投 R、平缓卖出 S、果断卖出
+        R = S = 0.0
+        sell_ok = valid and not in_review and not no_more_sell
+        if valid:
+            R = cash * P["SPEED"] * clip01((P["BUY_HI"] - Vc) / (P["BUY_HI"] - P["BUY_LO"])) ** 2
+        if sell_ok:
+            S = H * P["SPEED"] * clip01((Vc - P["SELL_LO"]) / (P["SELL_HI"] - P["SELL_LO"])) ** 2
+        Sstar = S
+        decisive_now = False
+        if sell_ok and decisive and Uc <= 1 / 3 + 1e-9 and Vc >= 50:
+            Ts = 1 - (1 - FL) * clip01((Vmax - P["SELL_LO"]) / (P["SELL_HI"] - P["SELL_LO"]))
+            if p > Ts + P["TH"]:
+                val = (p - Ts) * (H + C)
+                if val > Sstar:
+                    Sstar = val
+                    decisive_now = True
+        Sstar = max(0.0, min(Sstar, H - FL * (H + C + Dd)))
+        N = Dd + R - Sstar
+        cash += Dd                                   # 当日定投款先入资金池
+        if N >= 10:
+            amt = min(N, cash)
+            cash -= amt
+            w_r = (R - Sstar) / N if N > 0 and R > Sstar else 0.0
+            do_buy(t, amt, {"rebuy": max(0.0, w_r), "dca": 1 - max(0.0, w_r)})
+            if R - Sstar >= 10:
+                n_rebuy += 1
+                buy_amt += R - Sstar
+                buy_px += (R - Sstar) * close[t]
+                turnover_amt += R - Sstar
+                if record:
+                    trades.append((t, "rebuy", R - Sstar, close[t], p))
+        elif N <= -10:
+            got, gross = do_sell(t, -N, i)
+            if got > 0:
+                n_sell += 1
+                n_decisive += int(decisive_now)
+                sell_amt += gross
+                sell_px += gross * close[t]
+                turnover_amt += gross
+                if t0 is None:
+                    t0 = t
+                sold_sh += got
+                sold_trsh += got * tr[t]
+                if record:
+                    trades.append((t, "sell", gross, close[t], p, "果断" if decisive_now else "平缓"))
+
+        # 第九节触发检查
+        if valid and t0 is not None and not in_review and not no_more_sell:
+            conds = []
+            if t - t0 >= 3 * YEAR and t > sup["A"]:
+                conds.append("A")
+            pbar = sold_trsh / sold_sh if sold_sh > 0 else np.inf
+            if tr[i] >= 1.3 * pbar and close[i] > D.ma160[i] and t > sup["B"]:
+                conds.append("B")
+            if conds:
+                triggers.append((t, tuple(conds), t0))
+                if review:
+                    in_review = True
+                    review_end = t + 20
+                    review_conds = tuple(conds)
+                else:
+                    for cnd in conds:
+                        sup[cnd] = t + YEAR
+
+        tot = shares * nav[t] + cash + transit_sum
+        total[t] = tot
+        u = (tot - Dd) / units
+        units += Dd / u
+        twr[t] = u
+        pser[t] = shares * nav[t] / max(shares * nav[t] + cash + transit_sum, 1e-9)
+        cashser[t] = cash + transit_sum
+
+    twr = twr / twr[START - 1]
+    return dict(
+        ver="2.0", total=total, twr=twr, p=pser, cash=cashser, inflow=inflow, impday=impday, costday=costday,
+        final=total[-1], cost_sub=cost_sub, cost_red=cost_red, cost_comm=cost_comm, cost_imp=cost_imp,
+        cost_by_kind=cost_by_kind, n_sell=n_sell, n_rebuy=n_rebuy, n_special=n_special, stop_days=n_sell,
+        n_decisive=n_decisive,
+        avg_sell_px=sell_px / sell_amt if sell_amt else np.nan, avg_buy_px=buy_px / buy_amt if buy_amt else np.nan,
+        turnover_amt=turnover_amt, trades=trades, triggers=triggers, decisions=decisions,
+    )
